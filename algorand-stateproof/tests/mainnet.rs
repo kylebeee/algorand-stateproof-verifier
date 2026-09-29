@@ -29,7 +29,7 @@ fn fixture() -> &'static Fixture {
     F.get_or_init(|| {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../../fixtures/mainnet/input.json"
+            "/../fixtures/mainnet/input.json"
         );
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let ts = &v["trustedState"];
