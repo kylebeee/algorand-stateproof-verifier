@@ -15,10 +15,49 @@ use base64::Engine;
 /// 2^32.
 pub const WEIGHT_THRESHOLD: u64 = (1u64 << 32) * 30 / 100;
 
-/// go-algorand's `stateproof.LnIntApproximation`: `ceil(ln(x) * 2^16)`, computed in float64.
+/// go-algorand's `stateproof.LnIntApproximation`: `ceil(math.Log(float64(x)) * 2^16)`.
+///
+/// The result is only as deterministic as `math.Log`, so this reproduces it bit for bit:
+/// `go_log` is Go's algorithm evaluated the way Go's amd64 assembly (`math/log_amd64.s`)
+/// evaluates it, which is what MainNet's (amd64) nodes compute. The platform `f64::ln` differs
+/// from it on about 1 in 8,000 inputs near rounding boundaries (see difftest/).
 pub fn ln_int_approximation(x: u64) -> Result<u64> {
     ensure!(x > 0, "proven weight is zero");
-    Ok(((x as f64).ln() * 65536.0).ceil() as u64)
+    Ok((go_log(x as f64) * 65536.0).ceil() as u64)
+}
+
+/// Go's `math.Log` for finite `x >= 1`, as `math/log_amd64.s` computes it: the FreeBSD
+/// `e_log.c` algorithm with every operation rounded separately (no fused multiply-add) and in
+/// the same order. (Go on arm64 fuses some of these operations, so go-algorand itself returns
+/// a different `LnIntApproximation` on arm64 for a few inputs; difftest/ documents them.)
+fn go_log(x: f64) -> f64 {
+    const LN2_HI: f64 = 6.93147180369123816490e-01; // 0x3fe62e42fee00000
+    const LN2_LO: f64 = 1.90821492927058770002e-10; // 0x3dea39ef35793c76
+    const L1: f64 = 6.666666666666735130e-01; // 0x3FE5555555555593
+    const L2: f64 = 3.999999999940941908e-01; // 0x3FD999999997FA04
+    const L3: f64 = 2.857142874366239149e-01; // 0x3FD2492494229359
+    const L4: f64 = 2.222219843214978396e-01; // 0x3FCC71C51D8E78AF
+    const L5: f64 = 1.818357216161805012e-01; // 0x3FC7466496CB03DE
+    const L6: f64 = 1.531383769920937332e-01; // 0x3FC39A09D078C69F
+    const L7: f64 = 1.479819860511658591e-01; // 0x3FC2F112DF3E5244
+    debug_assert!(x.is_finite() && x >= 1.0);
+    // f1, ki := Frexp(x); if f1 < Sqrt2/2 { f1 *= 2; ki-- }
+    let bits = x.to_bits();
+    let mut f1 = f64::from_bits((bits & 0x000F_FFFF_FFFF_FFFF) | 0x3FE0_0000_0000_0000);
+    let mut k = (((bits >> 52) & 0x7FF) as i64 - 0x3FE) as f64;
+    if f1 < core::f64::consts::FRAC_1_SQRT_2 {
+        f1 *= 2.0;
+        k -= 1.0;
+    }
+    let f = f1 - 1.0;
+    let s = f / (2.0 + f);
+    let s2 = s * s;
+    let s4 = s2 * s2;
+    let t1 = s2 * (L1 + s4 * (L3 + s4 * (L5 + s4 * L7)));
+    let t2 = s4 * (L2 + s4 * (L4 + s4 * L6));
+    let r = t1 + t2;
+    let hfsq = 0.5 * f * f;
+    k * LN2_HI - ((hfsq - (s * (hfsq + r) + k * LN2_LO)) - f)
 }
 
 /// The voters commitment and total weight a block header commits to (`spt[0]`), if any.
