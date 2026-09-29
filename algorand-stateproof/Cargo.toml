@@ -1,0 +1,28 @@
+[package]
+name = "algorand-stateproof"
+description = "no_std verifier for Algorand state proofs (Sumhash512, deterministic Falcon-1024, Merkle vector commitments, compact certificates), built to run inside a zkVM."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sha2 = { workspace = true }
+sha3 = { workspace = true }
+serde = { workspace = true, optional = true }
+alloy-sol-types = { workspace = true, optional = true }
+
+[features]
+default = []
+# std::error::Error for Error (host tooling).
+std = []
+# Emit SP1 `cycle-tracker-report` markers around the expensive phases (profiling builds).
+cycle-tracker = ["std"]
+# serde derives for the light-client inputs (used to pass data into the zkVM).
+serde = ["dep:serde"]
+# Solidity ABI types for the zkVM public values (shared by guest, host and contracts).
+sol = ["dep:alloy-sol-types"]
+
+[dev-dependencies]
+hex = "0.4"
+serde_json = "1"
+base64 = "0.22"
