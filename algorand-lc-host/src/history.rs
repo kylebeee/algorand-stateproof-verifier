@@ -119,6 +119,7 @@ pub fn verify_history(
     use std::io::Write;
 
     let sh = algorand_stateproof::Sumhash512::new();
+    reconcile_intervals(intervals_path, &checkpoint)?;
     let mut out = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -218,6 +219,57 @@ pub fn verify_history(
     Ok(checkpoint)
 }
 
+/// Makes `intervals` agree with `checkpoint` before appending to it.
+///
+/// Lines are written as intervals verify, but the checkpoint is saved once per chunk, so a walk
+/// stopped mid-chunk leaves lines past the checkpoint that the resumed walk would append again.
+/// This drops those (and duplicates left by earlier versions), checks the remaining intervals are
+/// contiguous and match the checkpoint's count, and rewrites the file atomically if it changed.
+fn reconcile_intervals(path: &std::path::Path, checkpoint: &HistoryCheckpoint) -> Result<()> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        ensure!(checkpoint.intervals_verified == 0, "{} is missing", path.display());
+        return Ok(());
+    };
+    let anchor_round = checkpoint.anchor.next_round;
+    let state_round = checkpoint.state.next_round;
+    let mut kept = Vec::new();
+    let mut expected = anchor_round;
+    let mut lines = 0u64;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        lines += 1;
+        let interval: HistoryInterval = serde_json::from_str(line)
+            .with_context(|| format!("{}: malformed line {lines}", path.display()))?;
+        if interval.first_attested_round < expected || interval.first_attested_round >= state_round {
+            continue; // a duplicate, or verified after the last saved checkpoint
+        }
+        ensure!(
+            interval.first_attested_round == expected,
+            "{}: missing the interval starting at {expected}",
+            path.display()
+        );
+        expected = interval.last_attested_round + 1;
+        kept.push(line);
+    }
+    ensure!(
+        expected == state_round && kept.len() as u64 == checkpoint.intervals_verified,
+        "{} has {} intervals up to round {expected}, but the checkpoint says {} up to {state_round}",
+        path.display(),
+        kept.len(),
+        checkpoint.intervals_verified
+    );
+    if kept.len() as u64 != lines {
+        eprintln!(
+            "{}: dropped {} duplicate or unsaved line(s)",
+            path.display(),
+            lines - kept.len() as u64
+        );
+        let tmp = path.with_extension("jsonl.tmp");
+        std::fs::write(&tmp, kept.join("\n") + "\n")?;
+        std::fs::rename(&tmp, path)?;
+    }
+    Ok(())
+}
+
 /// Retries network calls through outages of up to ~15 minutes (public APIs return sporadic 500s
 /// during long walks). Only fetching is retried; verification failures are never retried.
 fn patiently<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
@@ -233,4 +285,41 @@ fn patiently<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
         }
     }
     f()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::json::TrustedStateJson;
+
+    fn state(next_round: u64) -> TrustedStateJson {
+        TrustedStateJson { voters_commitment: format!("0x{}", "00".repeat(64)), ln_proven_weight: 1, next_round }
+    }
+
+    fn line(first: u64) -> String {
+        format!(
+            r#"{{"firstAttestedRound":{first},"lastAttestedRound":{},"blockHeadersCommitment":"0x{first:064x}","confirmedRound":{}}}"#,
+            first + 255,
+            first + 400
+        )
+    }
+
+    #[test]
+    fn reconcile_drops_duplicates_and_unsaved_lines() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("algo-lc-reconcile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("intervals.jsonl");
+        // Checkpoint covers 3 intervals from 257; the file repeats one and has 2 unsaved lines.
+        let checkpoint = HistoryCheckpoint { anchor: state(257), state: state(257 + 3 * 256), intervals_verified: 3 };
+        let firsts = [257, 513, 513, 769, 1025, 1281];
+        std::fs::write(&path, firsts.map(line).join("\n") + "\n")?;
+        reconcile_intervals(&path, &checkpoint)?;
+        assert_eq!(std::fs::read_to_string(&path)?, [257, 513, 769].map(line).join("\n") + "\n");
+
+        // A file missing an interval the checkpoint claims is an error, not silently accepted.
+        std::fs::write(&path, [257, 769].map(line).join("\n") + "\n")?;
+        assert!(reconcile_intervals(&path, &checkpoint).is_err());
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
 }
