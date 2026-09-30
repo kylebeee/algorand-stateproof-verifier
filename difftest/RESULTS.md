@@ -62,8 +62,6 @@ The encodings were: a msgpack string where bytes are expected (36), trailing byt
 (18), a map key encoded as bytes (5), a non-minimal integer encoding (1), and nil for an array (1).
 The strictness is intentional. Chain data is always canonical, and a server that sends such bytes
 can only make a light client reject its response.
-State proof fuzzing: see below.
-
 ## Upstream: go-algorand's LnIntApproximation differs between amd64 and arm64
 
 For these 60 inputs x, `stateproof.LnIntApproximation(x)` (`ceil(math.Log(float64(x))·2^16)`)
