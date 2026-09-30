@@ -1,0 +1,7 @@
+# go-algorand reference clone + built libsodium (./setup.sh recreates it)
+.deps/
+rustffi/target/
+# Real-chain corpus (./fetch-corpus.sh recreates it; ~100 MB)
+corpus/
+overlay.json
+findings/

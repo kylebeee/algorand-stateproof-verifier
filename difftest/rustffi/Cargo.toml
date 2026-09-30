@@ -1,0 +1,21 @@
+# C ABI over the Rust verifier, linked into the Go differential tests (difftest/*.go).
+[workspace]
+
+[package]
+name = "aln-difftest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+algorand-stateproof = { path = "../../algorand-stateproof", features = ["std"] }
+algorand-lc-host = { path = "../../algorand-lc-host" }
+sha2 = "=0.10.8"
+
+[profile.release]
+opt-level = 3
+debug = true
+panic = "abort"
