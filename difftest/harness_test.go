@@ -5,6 +5,7 @@ package difftest
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -130,9 +131,15 @@ func CompareCase(t testing.TB, group, label string, c *Case) (Verdict, Verdict) 
 	class := classify(g, r, canonical)
 	stats.record(group, g, r, class)
 	if class != "" {
-		path := saveRepro(class, group, label, c, g, r)
+		repro := "saved to "
+		path, err := saveRepro(class, group, label, c, g, r)
+		if err != nil {
+			repro = "NOT SAVED: " + err.Error()
+		} else {
+			repro += path
+		}
 		msg := fmt.Sprintf("%s divergence [%s/%s]: go=%d (%s) rust=%d (%s); repro %s",
-			class, group, label, g.Status, g.Err, r.Status, r.Err, path)
+			class, group, label, g.Status, g.Err, r.Status, r.Err, repro)
 		if class == ClassNonCanonical && !failOnNonCanonical {
 			t.Log(msg)
 		} else {
@@ -189,22 +196,33 @@ var upstreamLog []string
 
 var reproMu sync.Mutex
 
-func saveRepro(class, group, label string, c *Case, g, r Verdict) string {
+// saveRepro writes the complete case (trusted inputs and proof) and both verdicts to
+// findings/<class>/<group>-<label>-<hash>.json and returns the path. Group and label are
+// flattened into one file name; the hash keeps distinct cases with the same label apart.
+func saveRepro(class, group, label string, c *Case, g, r Verdict) (string, error) {
 	reproMu.Lock()
 	defer reproMu.Unlock()
 	dir := filepath.Join("findings", class)
-	_ = os.MkdirAll(dir, 0o755)
-	body, _ := json.MarshalIndent(map[string]any{
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	body, err := json.MarshalIndent(map[string]any{
 		"class": class, "group": group, "label": label,
 		"voters": hex.EncodeToString(c.Voters), "lnProvenWeight": c.LnPW,
 		"strengthTarget": c.Strength, "round": c.Round,
 		"msgHash": hex.EncodeToString(c.MsgHash[:]), "proof": hex.EncodeToString(c.Proof),
 		"go": g, "rust": r,
 	}, "", "  ")
-	name := fmt.Sprintf("%s-%s.json", group, sanitize(label))
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	name := fmt.Sprintf("%s-%s-%x.json", sanitize(group), sanitize(label), sum[:4])
 	path := filepath.Join(dir, name)
-	_ = os.WriteFile(path, body, 0o644)
-	return path
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func sanitize(s string) string {
@@ -256,4 +274,58 @@ func printSummary() {
 	}
 	body, _ := json.MarshalIndent(stats, "", "  ")
 	_ = os.WriteFile(filepath.Join("findings", "summary.json"), body, 0o644)
+}
+
+// Reproductions are saved for groups with slashes, hold the complete case, and a failed save
+// is reported rather than claimed.
+func TestSaveRepro(t *testing.T) {
+	t.Chdir(t.TempDir())
+	c := &Case{Voters: []byte{1, 2, 3}, LnPW: 4, Strength: 5, Round: 6, MsgHash: [32]byte{7}, Proof: []byte{8, 9}}
+	g, r := Verdict{Rejected, "go error"}, Verdict{Accepted, ""}
+	for _, group := range []string{"real/mut", "synthetic/ctx", "fuzz/bytes"} {
+		path, err := saveRepro(ClassSoundness, group, "audit/label", c, g, r)
+		if err != nil {
+			t.Fatalf("%s: %v", group, err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s: reported reproduction does not exist: %v", group, err)
+		}
+		var got struct {
+			Class, Group, Label string
+			Voters, MsgHash, Proof string
+			LnProvenWeight         uint64
+			StrengthTarget         uint64
+			Round                  uint64
+			Go, Rust               Verdict
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatal(err)
+		}
+		voters, _ := hex.DecodeString(got.Voters)
+		msgHash, _ := hex.DecodeString(got.MsgHash)
+		proof, _ := hex.DecodeString(got.Proof)
+		if got.Class != ClassSoundness || got.Group != group || got.Label != "audit/label" ||
+			!bytes.Equal(voters, c.Voters) || !bytes.Equal(msgHash, c.MsgHash[:]) || !bytes.Equal(proof, c.Proof) ||
+			got.LnProvenWeight != c.LnPW || got.StrengthTarget != c.Strength || got.Round != c.Round ||
+			got.Go != g || got.Rust != r {
+			t.Errorf("%s: saved reproduction is incomplete:\n%s", group, raw)
+		}
+	}
+	// A different case with the same group and label does not overwrite the first.
+	c2 := *c
+	c2.Proof = []byte{10}
+	p1, _ := saveRepro(ClassSoundness, "real/mut", "audit/label", c, g, r)
+	p2, _ := saveRepro(ClassSoundness, "real/mut", "audit/label", &c2, g, r)
+	if p1 == p2 {
+		t.Errorf("distinct cases share %s", p1)
+	}
+	// Unwritable destination: a file where the class directory should be.
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("findings", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if path, err := saveRepro(ClassSoundness, "real/mut", "audit", c, g, r); err == nil {
+		t.Errorf("save into an unwritable destination reported success (%s)", path)
+	}
 }
