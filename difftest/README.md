@@ -49,7 +49,7 @@ Knobs (environment): `DIFFTEST_SYNTH` (synthetic proofs, default 60), `DIFFTEST_
    `f64::ln`, which differs from Go's `math.Log` in the last bit for about 1 in 8,000 inputs
    near rounding boundaries (1,132 of 9.26 million worst-case inputs against amd64 Go). It now
    evaluates Go's algorithm exactly as Go's amd64 assembly does, and matches amd64 go-algorand
-   on all 19.9 million inputs tested. It is used only by host tooling to derive anchors from
+   on all 20.2 million inputs tested. It is used only by host tooling to derive anchors from
    block headers (a wrong value makes the first state proof fail to verify, never pass); the
    no_std verifier and the zkVM program never compute it.
 2. **Upstream: go-algorand disagrees with itself across CPU architectures.** Go's `math.Log`

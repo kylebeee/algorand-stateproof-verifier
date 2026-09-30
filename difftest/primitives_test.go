@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -256,14 +257,29 @@ func lnInputs() []uint64 {
 		if f >= math.MaxUint64 {
 			break
 		}
-		base := uint64(math.Round(f))
-		for d := int64(-3); d <= 3; d++ {
-			if x := int64(base) + d; x >= 1 {
-				xs = append(xs, uint64(x))
-			}
-		}
+		xs = append(xs, nearby(uint64(math.Round(f)))...)
 	}
 	return xs
+}
+
+// nearby returns base-3..base+3 in unsigned arithmetic, leaving out 0 and values that would
+// wrap below 0 or above MaxUint64.
+func nearby(base uint64) []uint64 {
+	var out []uint64
+	for d := uint64(3); d >= 1; d-- {
+		if base > d {
+			out = append(out, base-d)
+		}
+	}
+	if base != 0 {
+		out = append(out, base)
+	}
+	for d := uint64(1); d <= 3; d++ {
+		if base <= math.MaxUint64-d {
+			out = append(out, base+d)
+		}
+	}
+	return out
 }
 
 // goAmd64Ln evaluates the formula as go-algorand on amd64 does (natively, or through an amd64
@@ -306,6 +322,41 @@ func goAmd64Ln(t *testing.T, xs []uint64) ([]uint64, bool) {
 		out[i] = v
 	}
 	return out, true
+}
+
+// The ln inputs reach the whole uint64 domain without wrapping at either end.
+func TestLnInputs(t *testing.T) {
+	for _, c := range []struct {
+		base uint64
+		want []uint64
+	}{
+		{0, []uint64{1, 2, 3}},
+		{1, []uint64{1, 2, 3, 4}},
+		{3, []uint64{1, 2, 3, 4, 5, 6}},
+		{1 << 63, []uint64{1<<63 - 3, 1<<63 - 2, 1<<63 - 1, 1 << 63, 1<<63 + 1, 1<<63 + 2, 1<<63 + 3}},
+		{math.MaxUint64 - 1, []uint64{math.MaxUint64 - 4, math.MaxUint64 - 3, math.MaxUint64 - 2, math.MaxUint64 - 1, math.MaxUint64}},
+		{math.MaxUint64, []uint64{math.MaxUint64 - 3, math.MaxUint64 - 2, math.MaxUint64 - 1, math.MaxUint64}},
+	} {
+		if got := nearby(c.base); !slices.Equal(got, c.want) {
+			t.Errorf("nearby(%d) = %v, want %v", c.base, got, c.want)
+		}
+	}
+	// Every k with e^(k/2^16) in [2^63, 2^64) contributes candidates above 2^63.
+	step := uint64(envInt("DIFFTEST_LN_STRIDE", 1))
+	edges := map[uint64]bool{}
+	for _, x := range edgeUint64s() {
+		edges[x] = true
+	}
+	upper := 0
+	for _, x := range lnInputs() {
+		if x > 1<<63 && !edges[x] {
+			upper++
+		}
+	}
+	if want := int(math.Ln2 * 65536 / float64(step)); upper < want {
+		t.Errorf("%d exponential-boundary inputs above 2^63, want at least %d", upper, want)
+	}
+	t.Logf("%d exponential-boundary inputs above 2^63", upper)
 }
 
 // ln(x) approximations. The reference is go-algorand on amd64 (what MainNet's nodes run).

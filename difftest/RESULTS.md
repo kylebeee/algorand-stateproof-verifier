@@ -12,7 +12,7 @@ including its first state proof, 41 from TestNet, sampled across history) and 38
 Synthetic: 169 proofs from go-algorand's prover (131 configurations were declined by the prover,
 mostly for needing more than 640 reveals).
 
-**40,596,024 comparisons. No SOUNDNESS, LIVENESS or NON-CANONICAL divergence.**
+**41,231,988 comparisons. No SOUNDNESS, LIVENESS or NON-CANONICAL divergence.**
 
 | group | compared | both accept | both reject | other |
 |---|---:|---:|---:|---|
@@ -39,11 +39,14 @@ mostly for needing more than 640 reveals).
 | falcon/to-ct-trailing-bytes | 720 | | | MASKED 720 (see README) |
 | msg-hash/fields, msg-hash/decode | 10,000 | 10,000 | 0 | |
 | light-header-leaf, txn-leaf | 25,000 | 25,000 | 0 | |
-| ln-int-approx (vs amd64 go-algorand) | 19,864,393 | 19,864,393 | 0 | after the fix; 1,132 differed before |
+| ln-int-approx (vs amd64 go-algorand) | 20,182,375 | 20,182,375 | 0 | after the fix; 1,132 differed before |
 | proven-weight | 100,000 | 100,000 | 0 | |
-| go-algorand ln, amd64 vs arm64 | 19,864,393 | | | UPSTREAM 60 (below) |
+| go-algorand ln, amd64 vs arm64 | 20,182,375 | | | UPSTREAM 60 (below) |
 
 ("both accept" for mutations: mutations that leave a proof valid, e.g. a lower strength target.)
+
+The two ln rows were re-run after the input generator was fixed to cover [2^63, 2^64) (it had
+dropped nearly all candidates there, see #4); the 317,982 added inputs changed nothing.
 
 Fuzzing (coverage-guided, `go test -fuzz`): FuzzFalcon 21.3M executions in 15 min, no divergence.
 State proof fuzzing: see below.
