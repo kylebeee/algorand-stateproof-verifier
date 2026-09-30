@@ -48,7 +48,20 @@ mostly for needing more than 640 reveals).
 The two ln rows were re-run after the input generator was fixed to cover [2^63, 2^64) (it had
 dropped nearly all candidates there, see #4); the 317,982 added inputs changed nothing.
 
-Fuzzing (coverage-guided, `go test -fuzz`): FuzzFalcon 21.3M executions in 15 min, no divergence.
+Fuzzing (coverage-guided, `go test -fuzz`), no SOUNDNESS or LIVENESS divergence in any run:
+
+| Target | Duration | Executions |
+|---|---|---|
+| FuzzFalcon | 15 min | 21.3M |
+| FuzzStateProofStructured (chains of 1–6 structured mutations) | 30 min | 0.86M |
+| FuzzStateProofBytes (arbitrary proof bytes; after the reproducible-contexts fix, #8) | 60 min | 46.3M |
+
+The byte-level run recorded 61 NON-CANONICAL differences, all of one kind: go-algorand's msgp
+decoder accepted a non-canonical encoding of a valid proof, and the Rust decoder rejected it.
+The encodings were: a msgpack string where bytes are expected (36), trailing bytes after the proof
+(18), a map key encoded as bytes (5), a non-minimal integer encoding (1), and nil for an array (1).
+The strictness is intentional. Chain data is always canonical, and a server that sends such bytes
+can only make a light client reject its response.
 State proof fuzzing: see below.
 
 ## Upstream: go-algorand's LnIntApproximation differs between amd64 and arm64
