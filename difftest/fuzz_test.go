@@ -6,6 +6,7 @@ package difftest
 //	./run.sh -run '^$' -fuzz FuzzStateProofBytes -fuzztime 30m
 
 import (
+	"fmt"
 	"math/rand"
 	"sync"
 	"testing"
@@ -92,27 +93,44 @@ func FuzzMessage(f *testing.F) {
 	}
 	f.Add([]byte{0x80})
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		var m stateproofmsg.Message
-		gerr := protocol.Decode(raw, &m)
-		canonical := gerr == nil && string(protocol.Encode(&m)) == string(raw)
-		rh, rok, rerr := RustMsgDecodeHash(raw)
-		switch {
-		case rok && gerr != nil:
-			t.Errorf("SOUNDNESS divergence [fuzz/message]: rust decodes what go rejects (%v) raw=%x", gerr, raw)
-		case rok && rh != [32]byte(m.Hash()):
-			t.Errorf("SOUNDNESS divergence [fuzz/message]: hashes differ raw=%x", raw)
-		case !rok && canonical:
-			t.Errorf("LIVENESS divergence [fuzz/message]: rust rejects canonical message (%s) raw=%x", rerr, raw)
-		}
-		g, r := Verdict{Status: Rejected}, Verdict{Status: Rejected}
-		if gerr == nil {
-			g.Status = Accepted
-		}
-		if rok {
-			r.Status = Accepted
-		}
-		stats.record("fuzz/message", g, r, classify(g, r, canonical))
+		compareMessage(t, "fuzz/message", raw)
 	})
+}
+
+// compareMessage decodes and hashes raw on both sides, with CompareCase's classification and
+// failure policy: NON-CANONICAL differences fail only with DIFFTEST_STRICT=1.
+func compareMessage(t testing.TB, group string, raw []byte) {
+	t.Helper()
+	var m stateproofmsg.Message
+	gerr := protocol.Decode(raw, &m)
+	canonical := gerr == nil && string(protocol.Encode(&m)) == string(raw)
+	rh, rok, rerr := RustMsgDecodeHash(raw)
+	g, r := Verdict{Status: Rejected}, Verdict{Status: Rejected}
+	if gerr != nil {
+		g.Err = gerr.Error()
+	} else {
+		g.Status = Accepted
+	}
+	if rok {
+		r.Status = Accepted
+	} else {
+		r.Err = rerr
+	}
+	class := classify(g, r, canonical)
+	detail := fmt.Sprintf("go=%d (%s) rust=%d (%s)", g.Status, g.Err, r.Status, r.Err)
+	if class == "" && rok && rh != [32]byte(m.Hash()) {
+		class, detail = ClassSoundness, "both decode, hashes differ"
+	}
+	stats.record(group, g, r, class)
+	if class == "" {
+		return
+	}
+	msg := fmt.Sprintf("%s divergence [%s]: %s raw=%x", class, group, detail, raw)
+	if class == ClassNonCanonical && !failOnNonCanonical {
+		t.Log(msg)
+	} else {
+		t.Error(msg)
+	}
 }
 
 var (
@@ -156,4 +174,48 @@ func FuzzWeights(f *testing.F) {
 		r := RustVerifyWeights(s, l, n, st)
 		CompareValue(t, "fuzz/weights", "fuzz", g == r, func() string { return "verifyWeights disagree" })
 	})
+}
+
+// recordingTB captures failures instead of failing the enclosing test.
+type recordingTB struct {
+	testing.TB
+	failed bool
+}
+
+func (r *recordingTB) Helper()               {}
+func (r *recordingTB) Log(...any)            {}
+func (r *recordingTB) Error(...any)          { r.failed = true }
+func (r *recordingTB) Errorf(string, ...any) { r.failed = true }
+
+// compareMessage fails on a NON-CANONICAL difference only in strict mode, and always on
+// canonical messages Rust rejects.
+func TestMessageStrictPolicy(t *testing.T) {
+	saved, savedStrict := stats, failOnNonCanonical
+	t.Cleanup(func() { stats, failOnNonCanonical = saved, savedStrict })
+	stats = &Stats{Compared: map[string]int{}, BothAccept: map[string]int{}, BothReject: map[string]int{}, Divergences: map[string]map[string]int{}}
+
+	// An empty message map followed by a trailing nil: go-algorand decodes it, Rust rejects it.
+	nonCanonical := []byte{0x80, 0xc0}
+	for _, strict := range []bool{false, true} {
+		failOnNonCanonical = strict
+		rec := &recordingTB{TB: t}
+		compareMessage(rec, "policy", nonCanonical)
+		if rec.failed != strict {
+			t.Errorf("strict=%v: failed=%v on a non-canonical difference", strict, rec.failed)
+		}
+	}
+	if n := stats.Divergences[ClassNonCanonical]["policy"]; n != 2 {
+		t.Errorf("recorded %d NON-CANONICAL divergences, want 2", n)
+	}
+	// Canonical messages still compare cleanly in both modes.
+	for _, strict := range []bool{false, true} {
+		failOnNonCanonical = strict
+		for _, p := range allRealProofs(t) {
+			rec := &recordingTB{TB: t}
+			compareMessage(rec, "policy", protocol.Encode(&p.Message))
+			if rec.failed {
+				t.Errorf("strict=%v: canonical message reported as a divergence", strict)
+			}
+		}
+	}
 }
