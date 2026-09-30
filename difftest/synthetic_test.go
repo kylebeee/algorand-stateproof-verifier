@@ -6,6 +6,7 @@ package difftest
 // lifetimes. Each proof, and every structured mutation of it, is compared on both sides.
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
@@ -43,12 +44,18 @@ func (c synthConfig) String() string {
 
 var signerCache = map[[3]uint64]*merklesignature.Secrets{}
 
+// signer returns key set idx for the given validity. Its keys are derived from (idx, lastValid,
+// keyLifetime), so every process builds the same keys and therefore the same proofs.
 func signer(t testing.TB, idx int, lastValid, keyLifetime uint64) *merklesignature.Secrets {
 	k := [3]uint64{uint64(idx), lastValid, keyLifetime}
 	if s, ok := signerCache[k]; ok {
 		return s
 	}
-	s, err := merklesignature.New(0, lastValid, keyLifetime)
+	var seed [32]byte
+	binary.BigEndian.PutUint64(seed[0:], k[0])
+	binary.BigEndian.PutUint64(seed[8:], k[1])
+	binary.BigEndian.PutUint64(seed[16:], k[2])
+	s, err := merklesignature.DiffNewFromSeed(seed, 0, lastValid, keyLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,9 +6,10 @@ implementation Algorand's nodes run. Every input goes through both verifiers in 
 verdict fails the run and is saved under `findings/`.
 
 **Reference:** go-algorand `v5.0.2-stable` (commit `fe1308bd`), the version Nodely's MainNet
-nodes report. `setup.sh` clones it into `.deps/` and builds its libsodium; the tests reach two
-unexported functions (`verifyWeights` and the coin generator) through a `go test -overlay` file
-(`overlay/`), without modifying the clone.
+nodes report. `setup.sh` clones it into `.deps/` and builds its libsodium. Through `go test
+-overlay` files (`overlay/`, wired up by `run.sh`) the tests reach two unexported functions
+(`verifyWeights` and the coin generator) and build Merkle signature keys from fixed seeds, so
+synthetic proofs are identical in every process; the clone itself is not modified.
 
 ```bash
 ./setup.sh                 # reference clone, Rust library, Go modules
