@@ -20,6 +20,7 @@
 //! | [`message`] | `data/stateproofmsg/message.go` |
 //! | [`lightheader`] | `data/bookkeeping/lightBlockHeader.go`, `txn_merkle.go` |
 //! | [`lightclient`] | chaining `ValidateStateProof` across intervals |
+//! | [`mmr`] | accumulator over interval commitments (history proofs) |
 #![no_std]
 
 extern crate alloc;
@@ -48,6 +49,7 @@ pub mod lightclient;
 pub mod lightheader;
 pub mod merkle;
 pub mod message;
+pub mod mmr;
 pub mod msgpack;
 pub mod sumhash;
 pub mod types;

@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "algorand-lc-host"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "algorand-stateproof",
  "alloy-sol-types",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "algorand-stateproof"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "alloy-sol-types",
  "base64 0.22.1",

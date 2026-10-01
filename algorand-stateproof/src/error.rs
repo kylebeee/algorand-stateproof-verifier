@@ -45,6 +45,9 @@ pub enum Error {
     },
     InvalidMessage(&'static str),
     NoStateProofs,
+
+    // --- history (mmr) ---
+    InvalidHistory(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -92,6 +95,7 @@ impl fmt::Display for Error {
             }
             Error::InvalidMessage(what) => write!(f, "invalid state proof message: {what}"),
             Error::NoStateProofs => f.write_str("no state proofs supplied"),
+            Error::InvalidHistory(what) => write!(f, "invalid history: {what}"),
         }
     }
 }
