@@ -60,12 +60,32 @@ pub struct VerifiedInterval {
     pub block_headers_commitment: [u8; 32],
 }
 
+/// What a verified certificate showed, beyond its interval: enough to evaluate claims stronger
+/// than the protocol's (e.g. that at least 2/3 of the weight signed).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CertificateStats {
+    pub signed_weight: u64,
+    pub num_reveals: u64,
+    /// The trusted ln(provenWeight) the certificate was checked against.
+    pub ln_proven_weight: u64,
+}
+
 /// Verifies one state proof on top of `state` and returns the successor state.
 pub fn apply_state_proof(
     sh: &Sumhash512,
     state: &TrustedState,
     txn: &StateProofTxn,
 ) -> Result<(TrustedState, VerifiedInterval)> {
+    apply_state_proof_with_stats(sh, state, txn).map(|(next, interval, _)| (next, interval))
+}
+
+/// [`apply_state_proof`], also returning the certificate's [`CertificateStats`].
+pub fn apply_state_proof_with_stats(
+    sh: &Sumhash512,
+    state: &TrustedState,
+    txn: &StateProofTxn,
+) -> Result<(TrustedState, VerifiedInterval, CertificateStats)> {
     let msg = &txn.message;
     if msg.first_attested_round != state.next_round {
         return Err(Error::RoundMismatch {
@@ -108,7 +128,33 @@ pub fn apply_state_proof(
             last_attested_round: msg.last_attested_round,
             block_headers_commitment,
         },
+        CertificateStats {
+            signed_weight: sp.signed_weight,
+            num_reveals: sp.positions_to_reveal.len() as u64,
+            ln_proven_weight: state.ln_proven_weight,
+        },
     ))
+}
+
+/// [`apply_state_proofs`], also returning each certificate's [`CertificateStats`].
+pub fn apply_state_proofs_with_stats(
+    sh: &Sumhash512,
+    state: &TrustedState,
+    txns: &[StateProofTxn],
+) -> Result<(TrustedState, Vec<VerifiedInterval>, Vec<CertificateStats>)> {
+    if txns.is_empty() {
+        return Err(Error::NoStateProofs);
+    }
+    let mut state = state.clone();
+    let mut intervals = Vec::with_capacity(txns.len());
+    let mut stats = Vec::with_capacity(txns.len());
+    for txn in txns {
+        let (next, interval, s) = apply_state_proof_with_stats(sh, &state, txn)?;
+        state = next;
+        intervals.push(interval);
+        stats.push(s);
+    }
+    Ok((state, intervals, stats))
 }
 
 /// Verifies a consecutive run of state proofs; returns the final state and every interval.
